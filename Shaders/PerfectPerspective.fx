@@ -1,4 +1,4 @@
-/*
+*
 Copyright (c) 2018 Jacob Maximilian Fober
 
 This work is licensed under the Creative Commons 
@@ -18,18 +18,9 @@ uniform int FOV <
 	ui_label = "Field of View";
 	ui_tooltip = "Match in-game Field of View";
 	ui_type = "drag";
-	ui_min = 45; ui_max = 120;
+	ui_min = 1; ui_max = 150;
 	ui_category = "Distortion";
-> = 90;
-
-uniform float Vertical <
-	ui_label = "Vertical Amount";
-	ui_tooltip = "0.0 - cylindrical projection \n"
-		"1.0 - spherical projection";
-	ui_type = "drag";
-	ui_min = 0.0; ui_max = 1.0;
-	ui_category = "Distortion";
-> = 0.618;
+> = 120;
 
 uniform int Type <
 	ui_label = "Type of FOV";
@@ -40,24 +31,13 @@ uniform int Type <
 	ui_category = "Distortion";
 > = 0;
 
-uniform float4 Color <
-	ui_label = "Color";
-	ui_tooltip = "Use Alpha to adjust opacity";
-	ui_type = "Color";
-	ui_category = "Borders";
-> = float4(0.027, 0.027, 0.027, 0.902);
-
-uniform bool Borders <
-	ui_label = "Mirrored Borders";
-	ui_category = "Borders";
-> = true;
-
-uniform float Zooming <
-	ui_label = "Border Scale";
+uniform float Vertical <
+	ui_label = "Vertical Amount";
+	ui_tooltip = "Use for minimise horisontal distorsion";
 	ui_type = "drag";
-	ui_min = 0.0; ui_max = 3.0; ui_step = 0.001;
-	ui_category = "Borders";
-> = 1.0;
+	ui_min = 0.0; ui_max = 1.0;
+	ui_category = "Distortion";
+> = 0.8;
 
 uniform bool Debug <
 	ui_label = "Display Resolution Map";
@@ -96,60 +76,53 @@ sampler SamplerColor
 // Input data:
 	// FOV >> Camera Field of View in degrees
 	// Coordinates >> UV coordinates (from -1, to 1), where (0,0) is at the center of the screen
-float Formula(float2 Coordinates)
-{
-	// Convert 1/4 FOV to radians and calc tangent squared
-	float SqrTanFOVq = tan(radians(float(FOV) * 0.25));
-	SqrTanFOVq *= SqrTanFOVq;
-	return (1.0 - SqrTanFOVq) / (1.0 - SqrTanFOVq * dot(Coordinates, Coordinates));
-}
-
 // Shader pass
 float3 PerfectPerspectivePS(float4 vois : SV_Position, float2 texcoord : TexCoord) : SV_Target
 {
 	// Get Aspect Ratio
 	float AspectR = 1.0 / ReShade::AspectRatio;
-	// Get Screen Pixel Size
-	float2 ScrPixelSize = ReShade::PixelSize;
 
 	// Convert FOV type..
 	float FovType = (Type == 1) ? sqrt(AspectR * AspectR + 1.0) : Type == 2 ? AspectR : 1.0;
-
-	// Convert UV to Radial Coordinates
+	
+	// Horizontal FOV 		FovType = 1.0
+	// Diagonal FOV			FovType = sqrt(AspectR * AspectR + 1.0)
+	// Vertical FOV			FovType = AspectR
+	
+	// Cjrrect to fov type
+	FovType = FOV/FovType;
+	// Convert UV to Radial Coordinates 
 	float2 SphCoord = texcoord * 2.0 - 1.0;
-	// Aspect Ratio correction
-	SphCoord.y *= AspectR;
+	
 	// Zoom in image and adjust FOV type (pass 1 of 2)
-	SphCoord *= Zooming / FovType;
-
+	//SphCoord *= Zooming;
+	
 	// Stereographic-Gnomonic lookup, vertical distortion amount and FOV type (pass 2 of 2)
-	SphCoord *= Formula(float2(SphCoord.x, sqrt(Vertical) * SphCoord.y)) * FovType;
-
-	// Aspect Ratio back to square
-	SphCoord.y /= AspectR;
-
+	float2 TempSphCoord = SphCoord;
+	
+	// Stereographic-Gnomonic lookup function by Jacob Max Fober
+	// Input data:
+	// FOV >> Camera Field of View in degrees
+	// Coordinates >> UV coordinates (from -1, to 1), where (0,0) is at the center of the screen
+	
+	//Horisontal disrorsion
+	float SqrTanFOVq = tan(radians(float (FovType) * AspectR * 0.25));
+	SqrTanFOVq *= SqrTanFOVq;
+	SphCoord.y *= (1.0 - SqrTanFOVq) / (1.0 - SqrTanFOVq * (SphCoord.y * SphCoord.y));
+	
+	//Vertical disrorsion
+	SqrTanFOVq = tan(radians(float (FovType) * 0.25 * Vertical));
+	SqrTanFOVq *= SqrTanFOVq;
+	SphCoord.x *= (1.0 - SqrTanFOVq) / (1.0 - SqrTanFOVq * (SphCoord.x * SphCoord.x));
+	
 	// Get Pixel Size in stereographic coordinates
 	float2 PixelSize = fwidth(SphCoord);
-
-	// Outside borders check with Anti-Aliasing
-	float2 AtBorders = smoothstep( 1 - PixelSize, PixelSize + 1, abs(SphCoord) );
-
+	
 	// Back to UV Coordinates
 	SphCoord = SphCoord * 0.5 + 0.5;
 
 	// Sample display image
 	float3 Display = tex2D(SamplerColor, SphCoord).rgb;
-
-	// Mask outside-border pixels or mirror
-	Display = lerp(
-		Display, 
-		lerp(
-			Borders ? Display : tex2D(SamplerColor, texcoord).rgb, 
-			Color.rgb, 
-			Color.a
-		), 
-		max(AtBorders.x, AtBorders.y)
-	);
 
 	// Output type choice
 	if (Debug)
@@ -199,3 +172,4 @@ technique PerfectPerspective
 		PixelShader = PerfectPerspectivePS;
 	}
 }
+
